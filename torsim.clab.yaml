@@ -1,0 +1,97 @@
+name: torsim
+
+topology:
+  kinds:
+    nokia_srlinux:
+      image: ghcr.io/nokia/srlinux:25.7.1
+      startup-config: ./configs/spine.cfg
+    linux:
+      kind: linux
+      image: ghcr.io/srl-labs/network-multitool:latest
+      binds:
+        - ./evpn-tor-simulator:/evpn-tor-simulator
+        - ./configs/tor-setup.sh:/tor-setup.sh
+        - ./configs/tor-simulator.sh:/tor-simulator.sh
+      exec:
+        - "bash /tor-setup.sh"
+      cmd: "/tor-simulator.sh"
+  nodes:
+    srl1:
+      kind: nokia_srlinux
+      config:
+        vars:
+          Loopbackip: 1.1.1.1
+          Spineprefix: 11
+          RRASN: 65011
+          vlans:
+            ethernet-1/1:
+              - 1
+              - 2
+            ethernet-1/2:
+              - 3
+              - 4
+    srl2:
+      kind: nokia_srlinux
+      config:
+        vars:
+          Loopbackip: 2.2.2.2
+          Spineprefix: 12
+          RRASN: 65012
+          vlans:
+            ethernet-1/1:
+              - 1
+              - 2
+            ethernet-1/2:
+              - 3
+              - 4
+
+    # Group 1, ethernet-1/1 (bridge1)
+    # Host ID is derived from hostname -> must be in the format gobgpX, where X is an integer over 1
+    # Host ID is also the VLAN assigned!
+    gobgp1:
+      kind: linux
+      env:
+        NEIGH_AS: 65011,65012
+        BD: 1
+        MAC: 48
+    gobgp2:
+      kind: linux
+      env:
+        NEIGH_AS: 65011,65012
+        BD: 2
+        MAC: 24
+    # Group 2, ethernet-1/2 (bridge2)
+    gobgp3:
+      kind: linux
+      env:
+        NEIGH_AS: 65011,65012
+        BD: 3
+        MAC: 24
+    gobgp4:
+      kind: linux
+      env:
+        NEIGH_AS: 65011,65012
+        BD: 4
+        MAC: 48
+    bridge1:
+      kind: bridge
+    bridge2:
+      kind: bridge
+
+  links:
+    # Group 1
+    - endpoints: [srl1:ethernet-1/1, bridge1:bridge1-srl1]
+    - endpoints: [srl2:ethernet-1/1, bridge1:bridge1-srl2]
+    - endpoints: [bridge1:gobgp1-1, gobgp1:eth1]
+    - endpoints: [bridge1:gobgp1-2, gobgp1:eth2]
+    - endpoints: [bridge1:gobgp2-1, gobgp2:eth1]
+    - endpoints: [bridge1:gobgp2-2, gobgp2:eth2]
+
+    # Group 2
+    - endpoints: [srl1:ethernet-1/2, bridge2:bridge2-srl1]
+    - endpoints: [srl2:ethernet-1/2, bridge2:bridge2-srl2]
+    - endpoints: [bridge2:gobgp3-1, gobgp3:eth1]
+    - endpoints: [bridge2:gobgp3-2, gobgp3:eth2]
+    - endpoints: [bridge2:gobgp4-1, gobgp4:eth1]
+    - endpoints: [bridge2:gobgp4-2, gobgp4:eth2]
+
