@@ -61,6 +61,7 @@ func generateType2Routes(hostID, countBD, countMAC uint, nexthopAddr netip.Addr)
 	for bd := uint(1); bd <= countBD; bd++ {
 		for idx := range routeCount / countBD {
 			mac := fmt.Sprintf("02:00:00:%02x:%02x:%02x", hostID%256, bd, idx%256)
+			// Optional: IP for MAC-IP routes...
 			//ip, err := netip.ParseAddr(fmt.Sprintf("9.%d.%d.%d", hostID%256, (idx/256)%256, idx%256))
 			//if err != nil {
 			//	return nil, fmt.Errorf("could not parse IP: %v", err)
@@ -224,7 +225,7 @@ func run(_ *cobra.Command, _ []string) error {
 }
 
 func serveToR(hostID, countBD, countMAC uint) error {
-	// 10.0.0.0/16 loopbacks
+	// 10.0.0.0/21 loopbacks
 	loopbackAddress, _ := netip.ParseAddr("10.0.0.0")
 	for range hostID {
 		loopbackAddress = loopbackAddress.Next()
@@ -316,7 +317,7 @@ func serveToR(hostID, countBD, countMAC uint) error {
 		return fmt.Errorf("error adding policy assignment: %v", err)
 	}
 
-	// Add the two eBGP underlay spine neighbors
+	// Add the eBGP underlay spine neighbors
 	for idx := range flagNeighbors {
 		logger.Debugf("Configuring eBGP underlay neighbor %v (AS %v)...", flagNeighbors[idx], flagNeighborAS[idx])
 		peer := &api.Peer{
@@ -328,9 +329,6 @@ func serveToR(hostID, countBD, countMAC uint) error {
 			Transport: &api.Transport{
 				PassiveMode: false,
 			},
-			//ApplyPolicy: &api.ApplyPolicy{
-			//	ImportPolicy: rejectPolicyAssignment,
-			//},
 			AfiSafis: []*api.AfiSafi{
 				{
 					Config: &api.AfiSafiConfig{
@@ -350,25 +348,7 @@ func serveToR(hostID, countBD, countMAC uint) error {
 		logger.Infof("Configured eBGP underlay neighbor %v (AS %v)", flagNeighbors[idx], flagNeighborAS[idx])
 	}
 
-	// localLoopbackPrefixes := &api.MatchSet{
-	// 	Type: api.MatchSet_TYPE_ALL,
-
-	// }
-
-	// exportLoopbackPolicy := &api.Policy{
-	// 	Name: "export-loopbacks",
-	// 	Statements: &api.Statement{
-	// 		Name: "accept-loopbacks",
-	// 		Conditions: &api.Conditions{
-	// 			PrefixSet: localLoopbackPrefixes,
-	// 		},
-	// 		Actions: &api.Actions{
-	// 			RouteAction: api.RouteAction_ROUTE_ACTION_ACCEPT,
-	// 		},
-	// 	}
-	// }
-
-	// Add the two iBGP RRs / neighbors
+	// Add iBGP RRs / neighbors
 	for _, rr := range flagRRs {
 		logger.Debugf("Configuring route reflector overlay neighbor %v (AS %v)...", rr, flagRRAS)
 		peer := &api.Peer{
@@ -381,9 +361,6 @@ func serveToR(hostID, countBD, countMAC uint) error {
 				LocalAddress: loopbackAddress.String(),
 				PassiveMode:  false,
 			},
-			//ApplyPolicy: &api.ApplyPolicy{
-			//	ImportPolicy: rejectPolicyAssignment,
-			//},
 			AfiSafis: []*api.AfiSafi{
 				{
 					Config: &api.AfiSafiConfig{
@@ -392,14 +369,6 @@ func serveToR(hostID, countBD, countMAC uint) error {
 							Safi: api.Family_SAFI_EVPN,
 						},
 					},
-					// ExportPolicy: *api.PolicyAssignment{
-					// 	Name: "global",
-					// 	Direction: api.PolicyDirection_POLICY_DIRECTION_EXPORT,
-					// 	DefaultAction: api.RouteAction_ROUTE_ACTION_REJECT,
-					// 	Policies: []*api.Policy{
-					// 		exportLoopbackPolicy,
-					// 	},
-					// }
 				},
 			},
 		}
@@ -411,7 +380,6 @@ func serveToR(hostID, countBD, countMAC uint) error {
 		logger.Infof("Configured route reflector overlay neighbor %v (AS %v)", rr, flagRRAS)
 	}
 
-	//logger.Debugf("Sent routes via server %v: %v", bgpServer, len(append(type2Routes, type5Routes...)))
 	logger.Infof("Advertised %d Type2 and %d Type5 routes", len(type2Routes), len(type5Routes))
 	return nil
 }
