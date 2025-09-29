@@ -14,5 +14,5 @@ NEIGH_ADDRS=$(IFS=,; for j in $SPINEINDICES; do echo -n "10.${j}.$((NEIGH_IPADDR
 sleep 10
 
 /evpn-tor-simulator --localaddrs ${LOCAL_ADDRS} --neighbors ${NEIGH_ADDRS}  --neighbor-as ${NEIGH_AS} \
-                    --rrs ${RRs:-1.1.1.1,2.2.2.2} --rr-as ${RR_AS:-65500} \
+                    --rrs ${RRs:-"1.1.1.1,2.2.2.2"} --rr-as ${RR_AS:-65500} \
                     --id ${ID} --bridge-domains ${BD} --macs-per-bd ${MAC}
