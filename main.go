@@ -30,7 +30,7 @@ var (
 	flagRRs            []string
 	flagNeighborAS     []uint
 	flagRRAS           uint
-	flagType           string
+	flagLoopbackBase   string
 	flagToR            uint
 	flagBD             uint
 	flagMACperBD       uint
@@ -48,6 +48,7 @@ func init() {
 	rootCmd.PersistentFlags().StringSliceVar(&flagRRs, "rrs", []string{"1.1.1.1", "2.2.2.2"}, "comma-separate list of route reflectors ip:port")
 	rootCmd.PersistentFlags().UintSliceVar(&flagNeighborAS, "neighbor-as", []uint{65011}, "comma-separated list of eBGP neighbor ASNs")
 	rootCmd.PersistentFlags().UintVar(&flagRRAS, "rr-as", 65500, "route reflector ASN")
+	rootCmd.PersistentFlags().StringVar(&flagLoopbackBase, "loopback-base", "10.0.0.0", "base address for loopback address generation")
 	rootCmd.PersistentFlags().UintVar(&flagToR, "id", 1, "ToR ID")
 	rootCmd.PersistentFlags().UintVar(&flagBD, "bridge-domains", 1, "number of bridge domains on ToR")
 	rootCmd.PersistentFlags().UintVar(&flagMACperBD, "macs-per-bd", 48, "number of MACs to send per BD")
@@ -226,7 +227,7 @@ func run(_ *cobra.Command, _ []string) error {
 
 func serveToR(hostID, countBD, countMAC uint) error {
 	// 10.0.0.0/21 loopbacks
-	loopbackAddress, _ := netip.ParseAddr("10.0.0.0")
+	loopbackAddress, _ := netip.ParseAddr(flagLoopbackBase)
 	for range hostID {
 		loopbackAddress = loopbackAddress.Next()
 	}

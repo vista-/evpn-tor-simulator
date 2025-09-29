@@ -12,6 +12,8 @@ RR_ARRAY=($(echo "$RRs" | tr ',' '\n'))
 SPINEINDICES=${SPINEINDICES:-"11,12"}
 SPINEINDEX_ARRAY=($(echo "$SPINEINDICES" | tr ',' '\n'))
 
+LOOPBACK_PREFIX=${LOOPBACK_PREFIX:-"10.0.0.0"}
+
 ip link set dev eth1 up
 ip link set dev eth2 up
 ip link add link eth1 name eth1.${ID} type vlan id ${ID}
@@ -21,7 +23,7 @@ for i in $(seq 0 1); do
 done
 ip link set dev eth1.${ID} up
 ip link set dev eth2.${ID} up
-ip addr add 10.0.$((ID/256)).$((ID%256))/32 dev lo
+ip addr add $(echo ${LOOPBACK_PREFIX} | cut -d "." -f1,2).$((ID / 256)).$((ID % 256))/32 dev lo
 
 for j in $(seq 0 1); do
   ip ro add ${RR_ARRAY[${j}]}/32 via 10.${SPINEINDEX_ARRAY[${j}]}.$((NEIGH_IPADDR / 256)).$((NEIGH_IPADDR % 256))
