@@ -51,12 +51,16 @@ topology:
     gobgp1:
       kind: linux
       env:
+        RRs: 1.1.1.1,2.2.2.2
+        SPINEINDICES: 11,12
         NEIGH_AS: 65011,65012
         BD: 1
         MAC: 48
     gobgp2:
       kind: linux
       env:
+        RRs: 1.1.1.1,2.2.2.2
+        SPINEINDICES: 11,12
         NEIGH_AS: 65011,65012
         BD: 2
         MAC: 24
@@ -64,12 +68,16 @@ topology:
     gobgp3:
       kind: linux
       env:
+        RRs: 1.1.1.1,2.2.2.2
+        SPINEINDICES: 11,12
         NEIGH_AS: 65011,65012
         BD: 3
         MAC: 24
     gobgp4:
       kind: linux
       env:
+        RRs: 1.1.1.1,2.2.2.2
+        SPINEINDICES: 11,12
         NEIGH_AS: 65011,65012
         BD: 4
         MAC: 48
