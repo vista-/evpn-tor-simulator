@@ -5,5 +5,5 @@ ip link set dev bridge2 up
 
 CGO_ENABLED=0 go build .
 
-## NOTE: MUST USE containerlab BUILT FROM BRANCH feature/idiv-template UNTIL CONTAINERLAB 0.70.3 IS RELEASED
+## NOTE: MUST USE containerlab BUILT FROM BRANCH main UNTIL CONTAINERLAB 0.70.3 IS RELEASED
 clab destroy && clab deploy -c
