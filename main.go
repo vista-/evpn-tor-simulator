@@ -88,16 +88,26 @@ func generateType2Routes(hostID, countBD, countMAC uint, nexthopAddr netip.Addr)
 				return nil, fmt.Errorf("could not create EVPN MAC-IP route: %v", err)
 			}
 
-			originAttr := bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_INCOMPLETE)
+			originAttr := bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP)
 			nexthopAttr, err := bgp.NewPathAttributeNextHop(nexthopAddr)
 			if err != nil {
 				return nil, fmt.Errorf("could not create next-hop path attribute: %v", err)
 			}
 
+			routeTargetComm := bgp.NewTwoOctetAsSpecificExtended(
+				bgp.EC_SUBTYPE_ROUTE_TARGET,
+				uint16(flagRRAS),
+				uint32(bd),
+				true,
+			)
+			tunnelEncapComm := bgp.NewEncapExtended(bgp.TUNNEL_TYPE_VXLAN)
+
+			nlriCommsAttr := bgp.NewPathAttributeExtendedCommunities([]bgp.ExtendedCommunityInterface{routeTargetComm, tunnelEncapComm})
+
 			route := &apiutil.Path{
 				Nlri:   nlri,
 				Family: bgp.RF_EVPN,
-				Attrs:  []bgp.PathAttributeInterface{originAttr, nexthopAttr},
+				Attrs:  []bgp.PathAttributeInterface{originAttr, nexthopAttr, nlriCommsAttr},
 			}
 
 			logger.Debugf("generated route: %v", route)
@@ -144,16 +154,26 @@ func generateType5Routes(hostID, countBD, countMAC uint, nexthopAddr netip.Addr)
 				return nil, fmt.Errorf("could not create EVPN MAC-IP route: %v", err)
 			}
 
-			originAttr := bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_INCOMPLETE)
+			originAttr := bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP)
 			nexthopAttr, err := bgp.NewPathAttributeNextHop(nexthopAddr)
 			if err != nil {
 				return nil, fmt.Errorf("could not create next-hop path attribute: %v", err)
 			}
 
+			routeTargetComm := bgp.NewTwoOctetAsSpecificExtended(
+				bgp.EC_SUBTYPE_ROUTE_TARGET,
+				uint16(flagRRAS),
+				uint32(bd),
+				true,
+			)
+			tunnelEncapComm := bgp.NewEncapExtended(bgp.TUNNEL_TYPE_VXLAN)
+
+			nlriCommsAttr := bgp.NewPathAttributeExtendedCommunities([]bgp.ExtendedCommunityInterface{routeTargetComm, tunnelEncapComm})
+
 			route := &apiutil.Path{
 				Nlri:   nlri,
 				Family: bgp.RF_EVPN,
-				Attrs:  []bgp.PathAttributeInterface{originAttr, nexthopAttr},
+				Attrs:  []bgp.PathAttributeInterface{originAttr, nexthopAttr, nlriCommsAttr},
 			}
 
 			logger.Debugf("generated route: %v", route)
