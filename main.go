@@ -34,6 +34,7 @@ var (
 	flagToR            uint
 	flagBD             uint
 	flagMACperBD       uint
+	flagESperToR       uint
 
 	logger *log.Logger
 )
@@ -55,68 +56,82 @@ func init() {
 	rootCmd.PersistentFlags().UintVar(&flagESperToR, "es-per-tor", 2, "number of Ethernet Segments per ToR")
 }
 
-func generateType4Routes(countES, nexthopAddr netip.Addr) ([]*apiutil.Path, error) {
+func createESlist(countES uint) []bgp.EthernetSegmentIdentifier {
+	// Create a deterministic list of EthernetSegmentIdentifier values.
+	// Each ESI has Type ESI_ARBITRARY and a 9-byte Value where the first
+	// byte encodes the index (1..countES) and the rest are zero.
+	list := make([]bgp.EthernetSegmentIdentifier, countES)
+	for i := uint(0); i < countES; i++ {
+		val := make([]byte, 9)
+		val[0] = byte((i + 1) & 0xff)
+		list[i] = bgp.EthernetSegmentIdentifier{
+			Type:  bgp.ESI_ARBITRARY,
+			Value: val,
+		}
+	}
+	return list
+}
 
-	routeCount := countES
+func generateType4Routes(countES uint, nexthopAddr netip.Addr) ([]*apiutil.Path, error) {
+
+	esList := createESlist(countES)
+	routeCount := len(esList)
 	routes := make([]*apiutil.Path, routeCount)
 
 	routeIdx := 0
-	for es := uint(1); es <= countES; es++ {
+	for _, esi := range esList {
 
-			rd, err := bgp.NewRouteDistinguisherIPAddressAS(nexthopAddr, 0)
-			if err != nil {
-				return nil, fmt.Errorf("could not create RD: %v", err)
-			}
+		rd, err := bgp.NewRouteDistinguisherIPAddressAS(nexthopAddr, 0)
+		if err != nil {
+			return nil, fmt.Errorf("could not create RD: %v", err)
+		}
 
-			nlri, err := bgp.NewEVPNEthernetSegmentRoute(
-				rd,
-				bgp.EthernetSegmentIdentifier{
-					Type:  bgp.ESI_ARBITRARY,
-					Value: make([]byte, 9),
-				},
-				netip.MustParseAddr(nexthopAddr),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("could not create EVPN ES route: %v", err)
-			}
+		nlri, err := bgp.NewEVPNEthernetSegmentRoute(
+			rd,
+			esi,
+			nexthopAddr,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("could not create EVPN ES route: %v", err)
+		}
 
-			originAttr := bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP)
-			nexthopAttr, err := bgp.NewPathAttributeNextHop(nexthopAddr)
-			if err != nil {
-				return nil, fmt.Errorf("could not create next-hop path attribute: %v", err)
-			}
+		originAttr := bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP)
+		nexthopAttr, err := bgp.NewPathAttributeNextHop(nexthopAddr)
+		if err != nil {
+			return nil, fmt.Errorf("could not create next-hop path attribute: %v", err)
+		}
 
-			ESImportRouteTargetComm := bgp.NewTwoOctetAsSpecificExtended(
-				bgp.EC_SUBTYPE_ES_IMPORT,
-				uint16(flagRRAS),
-				0,
-				true,
-			)
-			
-			DFElectionComm := bgp.NewTwoOctetAsSpecificExtended(
-				bgp.EC_SUBTYPE_OSPF_ROUTE_TYPE ,    //same as DF election subtype = 0x06
- 				uint16(flagRRAS),
-				0,
-				true,
-			)
+		ESImportRouteTargetComm := bgp.NewTwoOctetAsSpecificExtended(
+			bgp.EC_SUBTYPE_ES_IMPORT,
+			uint16(flagRRAS),
+			0,
+			true,
+		)
 
-			nlriCommsAttr := bgp.NewPathAttributeExtendedCommunities([]bgp.ExtendedCommunityInterface{ESImportRouteTargetComm, DFElectionComm})
+		DFElectionComm := bgp.NewTwoOctetAsSpecificExtended(
+			bgp.EC_SUBTYPE_OSPF_ROUTE_TYPE, //same as DF election subtype = 0x06
+			uint16(flagRRAS),
+			0,
+			true,
+		)
 
-			route := &apiutil.Path{
-				Nlri:   nlri,
-				Family: bgp.RF_EVPN,
-				Attrs:  []bgp.PathAttributeInterface{originAttr, nexthopAttr, nlriCommsAttr},
-			}
+		nlriCommsAttr := bgp.NewPathAttributeExtendedCommunities([]bgp.ExtendedCommunityInterface{ESImportRouteTargetComm, DFElectionComm})
 
-			logger.Debugf("generated route: %v", route)
+		route := &apiutil.Path{
+			Nlri:   nlri,
+			Family: bgp.RF_EVPN,
+			Attrs:  []bgp.PathAttributeInterface{originAttr, nexthopAttr, nlriCommsAttr},
+		}
 
-			routes[routeIdx] = route
-			routeIdx++
+		logger.Debugf("generated route: %v", route)
+
+		routes[routeIdx] = route
+		routeIdx++
 	}
 
 	return routes, nil
 
-} 
+}
 
 func generateType2Routes(hostID, countBD, countMAC uint, nexthopAddr netip.Addr) ([]*apiutil.Path, error) {
 	routeCount := countBD * countMAC
@@ -309,7 +324,7 @@ func run(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-func serveToR(hostID, countBD, countMAC uint, countES) error {
+func serveToR(hostID, countBD, countMAC, countES uint) error {
 	// 10.0.0.0/21 loopbacks
 	loopbackAddress, _ := netip.ParseAddr(flagLoopbackBase)
 	for range hostID {
@@ -376,7 +391,8 @@ func serveToR(hostID, countBD, countMAC uint, countES) error {
 		}
 	}
 
-	if err := addRoutes(bgpServer, append(type4Routes, type2Routes, type5Routes...)); err != nil {
+	allRoutes := append(type4Routes, append(type2Routes, type5Routes...)...)
+	if err := addRoutes(bgpServer, allRoutes); err != nil {
 		return fmt.Errorf("error adding EVPN routes: %v", err)
 	}
 
