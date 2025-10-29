@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -58,12 +59,17 @@ func init() {
 
 func createESlist(countES uint) []bgp.EthernetSegmentIdentifier {
 	// Create a deterministic list of EthernetSegmentIdentifier values.
-	// Each ESI has Type ESI_ARBITRARY and a 9-byte Value where the first
-	// byte encodes the index (1..countES) and the rest are zero.
+	// Each ESI has Type ESI_ARBITRARY and a 10-byte Value where:
+	// - byte 0 is always 0
+	// - byte 1 encodes the index (1..countES)
+	// - remaining bytes are zero
 	list := make([]bgp.EthernetSegmentIdentifier, countES)
 	for i := uint(0); i < countES; i++ {
-		val := make([]byte, 9)
-		val[0] = byte((i + 1) & 0xff)
+		val := make([]byte, 10)
+		// ensure first byte is explicitly zero
+		val[0] = 0
+		// store the index in the second byte
+		val[1] = byte((i + 1) & 0xff)
 		list[i] = bgp.EthernetSegmentIdentifier{
 			Type:  bgp.ESI_ARBITRARY,
 			Value: val,
@@ -101,10 +107,21 @@ func generateType4Routes(countES uint, nexthopAddr netip.Addr) ([]*apiutil.Path,
 			return nil, fmt.Errorf("could not create next-hop path attribute: %v", err)
 		}
 
+		// Build a Route Target extended community derived from ESI bytes 2..7.
+		// We compute a CRC32 over those six bytes so it fits into a uint32
+		// local administrator field for a two-octet-AS specific extended community.
+		var rtLocalAdmin uint32
+		if len(esi.Value) >= 8 {
+			chunk := esi.Value[2:8] // bytes 2..7 inclusive
+			rtLocalAdmin = crc32.ChecksumIEEE(chunk)
+		} else {
+			rtLocalAdmin = 0
+		}
+
 		ESImportRouteTargetComm := bgp.NewTwoOctetAsSpecificExtended(
-			bgp.EC_SUBTYPE_ES_IMPORT,
+			bgp.EC_SUBTYPE_ROUTE_TARGET,
 			uint16(flagRRAS),
-			0,
+			rtLocalAdmin,
 			true,
 		)
 
