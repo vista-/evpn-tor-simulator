@@ -12,7 +12,7 @@ RR_ARRAY=($(echo "$RRs" | tr ',' '\n'))
 SPINEINDICES=${SPINEINDICES:-"11,12"}
 SPINEINDEX_ARRAY=($(echo "$SPINEINDICES" | tr ',' '\n'))
 
-LOOPBACK_PREFIX=${LOOPBACK_PREFIX:-"10.0.0.0"}
+LOOPBACK_PREFIX=${LOOPBACK_PREFIX:-"82.0.0.0"}
 
 ip link set dev eth1 up
 ip link set dev eth2 up
