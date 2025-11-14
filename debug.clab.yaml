@@ -1,0 +1,11 @@
+name: debug-evpn-tor
+
+topology:
+  nodes:
+    debug-target:
+      kind: nokia_srlinux
+      image: ghcr.io/nokia/srlinux:25.7.2
+      startup-config: ./configs/debug.cfg
+  
+  links:
+    - endpoints: ["debug-target:ethernet-1/1", "host:debug-link"]

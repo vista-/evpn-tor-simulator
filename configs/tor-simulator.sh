@@ -8,7 +8,7 @@ LOCAL_IPADDR=$(( NEIGH_IPADDR + 1 ))
 
 SPINEINDICES=${SPINEINDICES:-"11,12"}
 
-LOOPBACK_PREFIX=${LOOPBACK_PREFIX:-"10.0.0.0"}
+LOOPBACK_PREFIX=${LOOPBACK_PREFIX:-"82.0.0.0"}
 
 LOCAL_ADDRS=$(IFS=,; for i in $SPINEINDICES; do echo -n "10.${i}.$((LOCAL_IPADDR / 256)).$((LOCAL_IPADDR % 256)),"; done | sed 's/,$//')
 NEIGH_ADDRS=$(IFS=,; for j in $SPINEINDICES; do echo -n "10.${j}.$((NEIGH_IPADDR / 256)).$((NEIGH_IPADDR % 256)),"; done | sed 's/,$//')

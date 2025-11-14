@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -34,6 +35,8 @@ var (
 	flagToR            uint
 	flagBD             uint
 	flagMACperBD       uint
+	flagESperToR       uint
+	flagESIndex        uint
 
 	logger *log.Logger
 )
@@ -48,15 +51,91 @@ func init() {
 	rootCmd.PersistentFlags().StringSliceVar(&flagRRs, "rrs", []string{"1.1.1.1", "2.2.2.2"}, "comma-separate list of route reflectors ip:port")
 	rootCmd.PersistentFlags().UintSliceVar(&flagNeighborAS, "neighbor-as", []uint{65011}, "comma-separated list of eBGP neighbor ASNs")
 	rootCmd.PersistentFlags().UintVar(&flagRRAS, "rr-as", 65500, "route reflector ASN")
-	rootCmd.PersistentFlags().StringVar(&flagLoopbackBase, "loopback-base", "10.0.0.0", "base address for loopback address generation")
+	rootCmd.PersistentFlags().StringVar(&flagLoopbackBase, "loopback-base", "82.0.0.0", "base address for loopback address generation")
 	rootCmd.PersistentFlags().UintVar(&flagToR, "id", 1, "ToR ID")
-	rootCmd.PersistentFlags().UintVar(&flagBD, "bridge-domains", 1, "number of bridge domains on ToR")
+	rootCmd.PersistentFlags().UintVar(&flagBD, "bridge-domains", 2, "number of bridge domains on ToR")
 	rootCmd.PersistentFlags().UintVar(&flagMACperBD, "macs-per-bd", 48, "number of MACs to send per BD")
+	rootCmd.PersistentFlags().UintVar(&flagESperToR, "es-per-tor", 5, "number of Ethernet Segments per ToR")
+	rootCmd.PersistentFlags().UintVar(&flagESIndex, "es-index", 10, "number of Ethernet Segments per ToR")
+}
+
+func generateType4Routes(countES uint, nexthopAddr netip.Addr) ([]*apiutil.Path, error) {
+	routeCount := flagESperToR
+	routes := make([]*apiutil.Path, routeCount)
+
+	for esiIdx := range flagESperToR {
+
+		rd, err := bgp.NewRouteDistinguisherIPAddressAS(nexthopAddr, 0)
+		if err != nil {
+			return nil, fmt.Errorf("could not create RD: %v", err)
+		}
+
+		esi := bgp.EthernetSegmentIdentifier{
+			Type:  bgp.ESI_ARBITRARY,
+			Value: []byte{byte((flagESIndex + esiIdx) / 256), byte((flagESIndex + esiIdx) % 256), 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+		}
+
+		nlri, err := bgp.NewEVPNEthernetSegmentRoute(
+			rd,
+			esi,
+			nexthopAddr,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("could not create EVPN ES route: %v", err)
+		}
+
+		originAttr := bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP)
+		nexthopAttr, err := bgp.NewPathAttributeNextHop(nexthopAddr)
+		if err != nil {
+			return nil, fmt.Errorf("could not create next-hop path attribute: %v", err)
+		}
+
+		// Build a Route Target extended community derived from ESI bytes 2..7.
+		// We compute a CRC32 over those six bytes so it fits into a uint32
+		// local administrator field for a two-octet-AS specific extended community.
+		var rtLocalAdmin uint32
+		if len(esi.Value) >= 8 {
+			chunk := esi.Value[2:8] // bytes 2..7 inclusive
+			rtLocalAdmin = crc32.ChecksumIEEE(chunk)
+		} else {
+			rtLocalAdmin = 0
+		}
+
+		ESImportRouteTargetComm := bgp.NewTwoOctetAsSpecificExtended(
+			bgp.EC_SUBTYPE_ROUTE_TARGET,
+			uint16(flagRRAS),
+			rtLocalAdmin,
+			true,
+		)
+
+		DFElectionComm := bgp.NewTwoOctetAsSpecificExtended(
+			bgp.EC_SUBTYPE_OSPF_ROUTE_TYPE, //same as DF election subtype = 0x06
+			uint16(flagRRAS),
+			0,
+			true,
+		)
+
+		nlriCommsAttr := bgp.NewPathAttributeExtendedCommunities([]bgp.ExtendedCommunityInterface{ESImportRouteTargetComm, DFElectionComm})
+
+		route := &apiutil.Path{
+			Nlri:   nlri,
+			Family: bgp.RF_EVPN,
+			Attrs:  []bgp.PathAttributeInterface{originAttr, nexthopAttr, nlriCommsAttr},
+		}
+
+		logger.Debugf("generated route: %v", route)
+
+		routes[esiIdx] = route
+	}
+
+	return routes, nil
 }
 
 func generateType2Routes(hostID, countBD, countMAC uint, nexthopAddr netip.Addr) ([]*apiutil.Path, error) {
 	routeCount := countBD * countMAC
 	routes := make([]*apiutil.Path, routeCount)
+
+	var esIdx uint = 0
 
 	routeIdx := 0
 	for bd := uint(1); bd <= countBD; bd++ {
@@ -77,7 +156,7 @@ func generateType2Routes(hostID, countBD, countMAC uint, nexthopAddr netip.Addr)
 				rd,
 				bgp.EthernetSegmentIdentifier{
 					Type:  bgp.ESI_ARBITRARY,
-					Value: make([]byte, 9),
+					Value: []byte{0x0, byte(esIdx + flagESIndex), 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 				},
 				0,
 				mac,
@@ -114,6 +193,10 @@ func generateType2Routes(hostID, countBD, countMAC uint, nexthopAddr netip.Addr)
 
 			routes[routeIdx] = route
 			routeIdx++
+			esIdx++
+			if esIdx == flagESperToR {
+				esIdx = 0
+			}
 		}
 	}
 
@@ -234,9 +317,9 @@ func addRoutes(server *server.BgpServer, routes []*apiutil.Path) error {
 }
 
 func run(_ *cobra.Command, _ []string) error {
-	log.SetLevel(log.InfoLevel)
+	log.SetLevel(log.DebugLevel)
 
-	serveToR(flagToR, flagBD, flagMACperBD)
+	serveToR(flagToR, flagBD, flagMACperBD, flagESperToR)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -245,7 +328,7 @@ func run(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-func serveToR(hostID, countBD, countMAC uint) error {
+func serveToR(hostID, countBD, countMAC, countES uint) error {
 	// 10.0.0.0/21 loopbacks
 	loopbackAddress, _ := netip.ParseAddr(flagLoopbackBase)
 	for range hostID {
@@ -287,8 +370,14 @@ func serveToR(hostID, countBD, countMAC uint) error {
 		return fmt.Errorf("error adding loopback routes: %v", err)
 	}
 
+	var type4Routes []*apiutil.Path
 	var type2Routes []*apiutil.Path
 	var type5Routes []*apiutil.Path
+
+	type4Routes, err = generateType4Routes(countES, loopbackAddress)
+	if err != nil {
+		return fmt.Errorf("error generating Type 4 routes: %v", err)
+	}
 
 	if countBD > 1 {
 		type2Routes, err = generateType2Routes(hostID, countBD, countMAC/2, loopbackAddress)
@@ -306,7 +395,8 @@ func serveToR(hostID, countBD, countMAC uint) error {
 		}
 	}
 
-	if err := addRoutes(bgpServer, append(type2Routes, type5Routes...)); err != nil {
+	allRoutes := append(type4Routes, append(type2Routes, type5Routes...)...)
+	if err := addRoutes(bgpServer, allRoutes); err != nil {
 		return fmt.Errorf("error adding EVPN routes: %v", err)
 	}
 
@@ -401,7 +491,7 @@ func serveToR(hostID, countBD, countMAC uint) error {
 		logger.Infof("Configured route reflector overlay neighbor %v (AS %v)", rr, flagRRAS)
 	}
 
-	logger.Infof("Advertised %d Type2 and %d Type5 routes", len(type2Routes), len(type5Routes))
+	logger.Infof("Advertised %d Type4, %d Type2 and %d Type5 routes", len(type4Routes), len(type2Routes), len(type5Routes))
 	return nil
 }
 
