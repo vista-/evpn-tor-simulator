@@ -36,6 +36,7 @@ var (
 	flagBD             uint
 	flagMACperBD       uint
 	flagESperToR       uint
+	flagESIndex        uint
 
 	logger *log.Logger
 )
@@ -52,44 +53,26 @@ func init() {
 	rootCmd.PersistentFlags().UintVar(&flagRRAS, "rr-as", 65500, "route reflector ASN")
 	rootCmd.PersistentFlags().StringVar(&flagLoopbackBase, "loopback-base", "82.0.0.0", "base address for loopback address generation")
 	rootCmd.PersistentFlags().UintVar(&flagToR, "id", 1, "ToR ID")
-	rootCmd.PersistentFlags().UintVar(&flagBD, "bridge-domains", 1, "number of bridge domains on ToR")
+	rootCmd.PersistentFlags().UintVar(&flagBD, "bridge-domains", 2, "number of bridge domains on ToR")
 	rootCmd.PersistentFlags().UintVar(&flagMACperBD, "macs-per-bd", 48, "number of MACs to send per BD")
-	rootCmd.PersistentFlags().UintVar(&flagESperToR, "es-per-tor", 2, "number of Ethernet Segments per ToR")
-}
-
-func createESlist(countES uint) []bgp.EthernetSegmentIdentifier {
-	// Create a deterministic list of EthernetSegmentIdentifier values.
-	// Each ESI has Type ESI_ARBITRARY and a 10-byte Value where:
-	// - byte 0 is always 0
-	// - byte 1 encodes the index (1..countES)
-	// - remaining bytes are zero
-	list := make([]bgp.EthernetSegmentIdentifier, countES)
-	for i := uint(0); i < countES; i++ {
-		val := make([]byte, 10)
-		// ensure first byte is explicitly zero
-		val[0] = 0
-		// store the index in the second byte
-		val[1] = byte((i + 1) & 0xff)
-		list[i] = bgp.EthernetSegmentIdentifier{
-			Type:  bgp.ESI_ARBITRARY,
-			Value: val,
-		}
-	}
-	return list
+	rootCmd.PersistentFlags().UintVar(&flagESperToR, "es-per-tor", 5, "number of Ethernet Segments per ToR")
+	rootCmd.PersistentFlags().UintVar(&flagESIndex, "es-index", 10, "number of Ethernet Segments per ToR")
 }
 
 func generateType4Routes(countES uint, nexthopAddr netip.Addr) ([]*apiutil.Path, error) {
-
-	esList := createESlist(countES)
-	routeCount := len(esList)
+	routeCount := flagESperToR
 	routes := make([]*apiutil.Path, routeCount)
 
-	routeIdx := 0
-	for _, esi := range esList {
+	for esiIdx := range flagESperToR {
 
 		rd, err := bgp.NewRouteDistinguisherIPAddressAS(nexthopAddr, 0)
 		if err != nil {
 			return nil, fmt.Errorf("could not create RD: %v", err)
+		}
+
+		esi := bgp.EthernetSegmentIdentifier{
+			Type:  bgp.ESI_ARBITRARY,
+			Value: []byte{byte((flagESIndex + esiIdx) / 256), byte((flagESIndex + esiIdx) % 256), 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 		}
 
 		nlri, err := bgp.NewEVPNEthernetSegmentRoute(
@@ -142,17 +125,17 @@ func generateType4Routes(countES uint, nexthopAddr netip.Addr) ([]*apiutil.Path,
 
 		logger.Debugf("generated route: %v", route)
 
-		routes[routeIdx] = route
-		routeIdx++
+		routes[esiIdx] = route
 	}
 
 	return routes, nil
-
 }
 
 func generateType2Routes(hostID, countBD, countMAC uint, nexthopAddr netip.Addr) ([]*apiutil.Path, error) {
 	routeCount := countBD * countMAC
 	routes := make([]*apiutil.Path, routeCount)
+
+	var esIdx uint = 0
 
 	routeIdx := 0
 	for bd := uint(1); bd <= countBD; bd++ {
@@ -173,7 +156,7 @@ func generateType2Routes(hostID, countBD, countMAC uint, nexthopAddr netip.Addr)
 				rd,
 				bgp.EthernetSegmentIdentifier{
 					Type:  bgp.ESI_ARBITRARY,
-					Value: make([]byte, 9),
+					Value: []byte{0x0, byte(esIdx + flagESIndex), 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 				},
 				0,
 				mac,
@@ -210,6 +193,10 @@ func generateType2Routes(hostID, countBD, countMAC uint, nexthopAddr netip.Addr)
 
 			routes[routeIdx] = route
 			routeIdx++
+			esIdx++
+			if esIdx == flagESperToR {
+				esIdx = 0
+			}
 		}
 	}
 
@@ -330,7 +317,7 @@ func addRoutes(server *server.BgpServer, routes []*apiutil.Path) error {
 }
 
 func run(_ *cobra.Command, _ []string) error {
-	log.SetLevel(log.InfoLevel)
+	log.SetLevel(log.DebugLevel)
 
 	serveToR(flagToR, flagBD, flagMACperBD, flagESperToR)
 
